@@ -1,0 +1,232 @@
+---
+title: "American option pricing"
+author: "Yu DAI"
+date: "7/9/2019"
+output: html_document
+---
+
+```{r}
+rand2<-function(numran,idum=-1){  
+  IM1=2147483563
+  IM2=2147483399
+  IMM1=IM1-1
+  IA1=40014
+  IA2=40692
+  IQ1=53668
+  IQ2=52774
+  IR1=12211
+  IR2=3791
+  NTAB=32
+  NDIV=1+IMM1/NTAB
+  #make sure that you initializa the generator with a non-positive idum. 
+  if(idum>0){idum=-idum}
+  
+  idum2=123456789
+  iv=rep(0,NTAB)
+  iy=0
+  #real number
+  AM=1./IM1
+  EPS=1.2e-7
+  RNMX=1.-EPS#number very close to 1
+  random<-rep(0,numran)
+  icount=1
+  for(icount in 1:numran){
+    if(idum<=0){
+      idum<-max(-idum,1)
+      idum2=idum
+      j=NTAB+8
+      while(j>0){
+        k<-as.integer(idum/IQ1)
+        idum<-IA1*(idum-k*IQ1)-k*IR1
+        if(idum<0){
+          idum<-idum+IM1
+        }
+        if(j<33){iv[j]<-idum}
+        j<-j-1
+      }
+      iy<-iv[1]
+    }
+    k<-as.integer(idum/IQ1)
+    idum<-IA1*(idum-k*IQ1)-k*IR1
+    if(idum<0){idum<-idum+IM1}
+    k<-as.integer(idum2/IQ2)
+    idum2=IA2*(idum2-k*IQ2)-k*IR2
+    if(idum2<0){idum2<-idum2+IM2}
+    j<-1+as.integer(iy/NDIV)
+    iy<-iv[j]-idum2
+    iv[j]<-idum
+    if(iy<1){iy<-iy+IMM1}
+    ran2<-min(AM*iy,RNMX)
+    random[icount]<-ran2
+  }
+  return(random)
+}
+
+gassMap<-function(idum){
+  #input: idum between 0 and 1
+  #output: x,approximation to inverse normal cdf
+  a0=2.50662823884
+  a1=-18.61500062529
+  a2=41.39119773534
+  a3=-25.44106049637
+  b0=-8.47351093090
+  b1=23.08336743743
+  b2=-21.06224101826
+  b3=3.13082909833
+  C<-c(0.3374754822726147,0.9761690190917186,0.1607979714918209
+       ,0.0276438810333863,0.0038405729373609,0.0003951896511919
+       ,0.0000321767881768,0.0000002888167364,0.0000003960315187)
+  
+  y<-idum-0.5
+  if(abs(y)<0.42){
+    r<-y*y
+    x<-y*(((a3*r+a2)*r+a1)*r+a0)/((((b3*r+b2)*r+b1)*r+b0)*r+1)
+  }
+  else{
+    r<-idum
+    if(y>0){r<-1-idum}
+    r<-log(-log(r))
+    x<-C[1]+r*(C[2]+r*(C[3]+r*(C[4]+r*(C[5]+r*(C[6]+r*(C[7]+r*(C[8]+r*C[9])))))))
+    if(y<0){x<-(-x)}
+  }
+  return(x)
+}
+#this is a function that generate normal distributed random number 
+gassrand<-function(numran,idum=-1){
+  if(idum>0){idum=-idum}
+  randnum=rand2(numran,idum)
+  gassRand=rep(0,length(randnum))
+  for(i in 1:length(randnum)){
+    gassRand[i]<-gassMap(randnum[i])
+  }
+  return(gassRand)
+}
+```
+Function that will simulate stock price given S0,drift,vol,r
+```{r}
+MY_Stock_Simu<-function(num_grid,path_num,dt,drift,vol,S0){
+  randomwalk<-gassrand(num_grid*path_num,0)
+  randomwalk<-t(matrix(data=randomwalk,nrow = num_grid, ncol = path_num,byrow = FALSE,dimnames = NULL))
+  price_path<-matrix(data = 0, nrow = path_num, ncol = num_grid+1, byrow = FALSE,dimnames = NULL)
+  price_path[,1]<-rep(S0,path_num)
+  #simulate stock path
+  for(i in 1:path_num){
+    for(j in 1:num_grid){
+      price_path[i,j+1]=price_path[i,j]*exp((drift*dt+vol*sqrt(dt)*randomwalk[i,j])) 
+    }
+  }
+  return(price_path)
+}
+```
+
+Thus by hedging with the option, bank can reduce its risk.
+```{r}
+dt=2/52 #bi_weely grid
+K=100
+t=0.5
+S0=100
+vol=0.25
+r=0.03
+m<-13
+n<-10000
+drift<-r-0.5*vol*vol
+Simu_stock<-MY_Stock_Simu(m,n,dt,drift,vol,S0)
+```
+(2) Evaluation for early exercise is every two weeks, I define a function to calculated American option price based on barrier that user gives
+```{r }
+Us_option<-function(n,m,barrier,stocke_price,K){
+  option_value<-rep(0,n)
+  dt<-2/52
+  t_t_T<-m*dt
+  r<-0.03
+  t_n<-m #value every 2 weekd
+  for(i in 1:n){
+    for(j in 2:t_n){
+     if(Simu_stock[i,j]<=barrier){
+        #early exercise
+        option_value[i]=(K-stocke_price[i,j])*exp(-(j)*dt*r)
+        break;
+      }
+      option_value[i]=max((K-stocke_price[i,j]),0)*exp(-t_t_T*r)
+      
+    }
+  }
+  return( mean(option_value))
+}
+
+```
+(3) Determine the level of the barrier that maximized the value of the put option
+To make my code more effient:
+First,I use a series a grid of 1 from K/50 to K and calculated the option price for each barrier
+Second, I find the grid that has the maxinum price,best_grid1
+Third, I set a a series a grid of 0.1 from (best_grid1-1) to (best_grid1+1)
+Then, I find the grid that has the maxinum price,best_grid2
+Then, I set a a series a grid of 0.01 from (best_grid1-1) to (best_grid1+1)
+#By doing this,I can find the target grid doing the calculation for 80*n*m of precision of 0.001,  vs doing 50000*n*m  times
+```{r }
+barrier<-seq(50, 100, 1 )
+l<-length(barrier)
+option_price<-rep(0,l)
+for(i in 1:l){
+  option_price[i]<-Us_option(n,m,barrier[i],Simu_stock,K)
+}
+
+for(i in 1:3){
+I1=which.max(option_price)
+low=I1-1
+up=I1+1
+barrier<-seq(barrier[low], barrier[up], 1/10**i )
+l<-length(barrier)
+option_price<-rep(0,l)
+for(j in 1:l){
+  option_price[j]<-Us_option(n,m,barrier[j],Simu_stock,K)
+}
+}
+I1=which.max(option_price)
+optimized_barrier<-barrier[I1]
+optimized_option_price<-option_price[I1]
+
+cat('optimized barrier is: ',optimized_barrier)
+cat('\nEuropean option price is: ',Us_option(n,m,0,Simu_stock,K))
+cat('\noptimized American option price is',optimized_option_price)
+#given a barrier that stock price cannot reach==>Np early exercise==>european option price
+```
+
+As we can see that our American option price > European option price for the same parameters,which is consistent with the reality that American option is expensive than European option.
+
+## Check the value of the American put against the value determined by a Binomial Model
+```{r }
+# Binomial Model
+numsteps<-13
+DelT <- 2/52 
+uptick<-exp(+vol*sqrt(DelT))
+dntick<-exp(-vol*sqrt(DelT))
+FVFactor<-exp(r*DelT)
+probup<-(FVFactor-dntick)/(uptick-dntick)
+probdn<-1-probup
+SMat<-matrix(rep(0),nrow=numsteps,ncol=numsteps)
+EMat<-matrix(rep(0),nrow=numsteps,ncol=numsteps)
+AMat<-matrix(rep(0),nrow=numsteps,ncol=numsteps)
+for (i in 1:numsteps) {
+  for (j in 1:i) {
+    SMat[j,i]<-S0*uptick^(i-j)*dntick^(j-1) 
+}}
+
+i<-numsteps
+for (j in 1:i) {
+  EMat[j,numsteps]<-max(K-SMat[j,numsteps],0)
+  AMat[j,numsteps]<-max(K-SMat[j,numsteps],0)
+}
+i<-i-1
+while (i > 0) {
+  for (j in 1:i) {
+    EMat[j,i] <- (1/FVFactor)*(probup*EMat[j,i+1] + probdn*EMat[j+1,i+1])
+    AMat[j,i] <- (1/FVFactor)*(probup*AMat[j,i+1] + probdn*AMat[j+1,i+1])
+    AMat[j,i] <- max(AMat[j,i],K-SMat[j,i])
+    }
+    i<-i-1
+}
+
+cat('European option price is: ',EMat[1,1],'\n')
+cat('American option price is: ',AMat[1,1],'\n')
+```

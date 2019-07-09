@@ -1,0 +1,266 @@
+---
+title: "Simu HW#3 Q3"
+author: "Yu DAI"
+date: "2019/4/28"
+output: html_document
+---
+### Assumption for Q3:
+Bond info:
+(1) Time to maturity: 5 year
+(2) coupon rate: 6% (annually)
+Interest rate is continously compounded
+Volatility for interest rate is: 0.05
+
+```{r }
+rand2<-function(numran,idum=-1){  
+  IM1=2147483563
+  IM2=2147483399
+  IMM1=IM1-1
+  IA1=40014
+  IA2=40692
+  IQ1=53668
+  IQ2=52774
+  IR1=12211
+  IR2=3791
+  NTAB=32
+  NDIV=1+IMM1/NTAB
+  #make sure that you initializa the generator with a non-positive idum. 
+  if(idum>0){idum=-idum}
+  
+  idum2=123456789
+  iv=rep(0,NTAB)
+  iy=0
+  #real number
+  AM=1./IM1
+  EPS=1.2e-7
+  RNMX=1.-EPS#number very close to 1
+  random<-rep(0,numran)
+  icount=1
+  for(icount in 1:numran){
+    if(idum<=0){
+      idum<-max(-idum,1)
+      idum2=idum
+      j=NTAB+8
+      while(j>0){
+        k<-as.integer(idum/IQ1)
+        idum<-IA1*(idum-k*IQ1)-k*IR1
+        if(idum<0){
+          idum<-idum+IM1
+        }
+        if(j<33){iv[j]<-idum}
+        j<-j-1
+      }
+      iy<-iv[1]
+    }
+    k<-as.integer(idum/IQ1)
+    idum<-IA1*(idum-k*IQ1)-k*IR1
+    if(idum<0){idum<-idum+IM1}
+    k<-as.integer(idum2/IQ2)
+    idum2=IA2*(idum2-k*IQ2)-k*IR2
+    if(idum2<0){idum2<-idum2+IM2}
+    j<-1+as.integer(iy/NDIV)
+    iy<-iv[j]-idum2
+    iv[j]<-idum
+    if(iy<1){iy<-iy+IMM1}
+    ran2<-min(AM*iy,RNMX)
+    random[icount]<-ran2
+  }
+  return(random)
+}
+```
+
+```{r }
+gassMap<-function(idum){
+  #input: idum between 0 and 1
+  #output: x,approximation to inverse normal cdf
+  a0=2.50662823884
+  a1=-18.61500062529
+  a2=41.39119773534
+  a3=-25.44106049637
+  b0=-8.47351093090
+  b1=23.08336743743
+  b2=-21.06224101826
+  b3=3.13082909833
+  C<-c(0.3374754822726147,0.9761690190917186,0.1607979714918209
+       ,0.0276438810333863,0.0038405729373609,0.0003951896511919
+       ,0.0000321767881768,0.0000002888167364,0.0000003960315187)
+  
+  y<-idum-0.5
+  if(abs(y)<0.42){
+    r<-y*y
+    x<-y*(((a3*r+a2)*r+a1)*r+a0)/((((b3*r+b2)*r+b1)*r+b0)*r+1)
+  }
+  else{
+    r<-idum
+    if(y>0){r<-1-idum}
+    r<-log(-log(r))
+    x<-C[1]+r*(C[2]+r*(C[3]+r*(C[4]+r*(C[5]+r*(C[6]+r*(C[7]+r*(C[8]+r*C[9])))))))
+    if(y<0){x<-(-x)}
+  }
+  return(x)
+}
+#this is a function that generate normal distributed random number 
+gassrand<-function(numran,idum=-1){
+  if(idum>0){idum=-idum}
+  randnum=rand2(numran,idum)
+  gassRand=rep(0,length(randnum))
+  for(i in 1:length(randnum)){
+    gassRand[i]<-gassMap(randnum[i])
+  }
+  return(gassRand)
+}
+hist(gassrand(10000))
+
+```
+### Bond Option Pricing Under Ho_lee's Framework
+## Step1: generate forward rate F(0:t1,t2) in continoua compounded situation
+# P_t_T: Present Value of 1 dollar at maturity t=0,1,2,3,4,5
+```{r }
+#observed spot rate is:
+spot<-c(0.01,0.02,0.025,0.03,0.0325)
+#corresponding time of observed spot rate is:
+time<-c(1,2,3,4,5)
+# the Worth of 1 dollar @ 0,1,2,3,4,5 year at today 
+P_t_T<-rep(0,5)
+for(i in 1:5){
+  P_t_T[i]=1*exp(-spot[i]*i)
+}
+cat('Present Value of 1 dollar at maturity t=1,2,3,4,5\n')
+P_t_T
+#forward rate F(0:t1,t2) is:
+forward_rate=rep(0,5)
+forward_rate[1]=spot[1]
+for(i in 2:5){
+  forward_rate[i]=log(P_t_T[i-1]/P_t_T[i])/1
+}
+cat('Implied forward rate oberserved today:\n')
+for(i in 1:5){
+  cat('time',i-1,'~time',i,' : ',forward_rate[i],'\n')
+}
+```
+## Step2: Estimated bond price of today
+```{r }
+#Bond info:
+FV=100    #face value
+C=0.06*FV #coupon payment
+PV_C1=C*exp(-spot[1])
+PV_C2=C*exp(-spot[1]-forward_rate[2])
+PV_C3=C*exp(-spot[1]-forward_rate[2]-forward_rate[3])
+PV_C4=C*exp(-spot[1]-forward_rate[2]-forward_rate[3]-forward_rate[4])
+PV_C5=C*exp(-spot[1]-forward_rate[2]-forward_rate[3]-forward_rate[4]-forward_rate[5])
+PV_FV=FV*exp(-spot[1]-forward_rate[2]-forward_rate[3]-forward_rate[4]-forward_rate[5])
+PV_Bond=PV_C1+PV_C2+PV_C3+PV_C4+PV_C5+PV_FV
+PV_Bond
+```
+## Step 3: Simulate interest rate under Ho_Lee Model,path=10000, each path with 4 grid
+```{r }
+Ho_Lee_interest<-function(num_grid,path_num,vol,r0,forward){
+  #generate random number
+  randomwalk<-gassrand(num_grid*path_num,0)
+  
+  randomwalk<-t(matrix(data=randomwalk,nrow = num_grid, ncol = path_num,byrow = FALSE,dimnames = NULL))
+  
+  interest_path<-matrix(data = 0, nrow = path_num, ncol = num_grid+1, byrow = FALSE,dimnames = NULL)
+  
+  delta_T=1
+  #simulate stock path
+  interest_path[,1]<-rep(r0, path_num)
+  for(i in 1:path_num){
+    for(j in 1:num_grid){
+      interest_path[i,j+1]=interest_path[i,j]+(forward[j+1]-forward[j])+0.5*vol*vol*((j)^2-(j-1)^2)+vol*sqrt(delta_T)*randomwalk[i,j]
+    }
+  }
+  return(interest_path)
+}
+
+sigma <- 0.05
+num_grid<-4
+path_num<-10000
+Ho_Lee_of_interest<-Ho_Lee_interest(num_grid,path_num,sigma,spot[1],forward_rate)
+cat('Implied forward rate oberserved today:\n')
+for(i in 1:4){
+  cat('time',i,'~time',i+1,' : ',forward_rate[i],'\n')
+}
+cat('Expeacted Value of  1 year rate at year 1:',mean(Ho_Lee_of_interest[,2]),'\n')
+cat('Expeacted Value of  2 year rate at year 1:',mean(Ho_Lee_of_interest[,3]),'\n')
+cat('Expeacted Value of  3 year rate at year 1:',mean(Ho_Lee_of_interest[,4]),'\n')
+cat('Expeacted Value of  4 year rate at year 1:',mean(Ho_Lee_of_interest[,5]),'\n')
+
+hist(Ho_Lee_of_interest[,2],main='Distribution of 1 year rate at year 1')
+hist(Ho_Lee_of_interest[,3],main='Distribution of 2 year rate at year 1')
+hist(Ho_Lee_of_interest[,4],main='Distribution of 3 year rate at year 1')
+hist(Ho_Lee_of_interest[,5],main='Distribution of 4 year rate at year 1')
+###
+```
+### Step 4: Calculated Bond price at year 1 and computing option price
+```{r }
+K=100 #strike price
+bond_price<-rep(0,path_num)
+call_option_value<-rep(0,path_num)
+for(i in 1:path_num){
+  for(j in 2:num_grid)
+    bond_price[i]= bond_price[i]+C*exp(-Ho_Lee_of_interest[i,j])
+    if(j==num_grid){
+      bond_price[i]=bond_price[i]+FV*exp(-Ho_Lee_of_interest[i,j])
+    }
+  call_option_value[i]<-max(bond_price[i]-K,0)
+}
+Call_price<-mean(call_option_value)
+cat("Call option price for bond is:",Call_price)
+```
+### Bond Option Pricing Under Vasicek's Framework
+## Step1 : Simulate interest rate under Vasicek Model,path=10000, each path with 4 grid
+```{r }
+Vasicek_interest<-function(num_grid,path_num,r0,forward,alpha,vol){
+  #generate random number
+  randomwalk<-gassrand(num_grid*path_num,0)
+  
+  randomwalk<-t(matrix(data=randomwalk,nrow = num_grid, ncol = path_num,byrow = FALSE,dimnames = NULL))
+  
+  interest_path<-matrix(data = 0, nrow = path_num, ncol = num_grid+1, byrow = FALSE,dimnames = NULL)
+  dt=1
+  #simulate stock path
+  interest_path[,1]<-rep(0, path_num)
+  for(i in 1:path_num){
+    for(j in 1:num_grid){
+      interest_path[i,j+1]=interest_path[i,j]*exp(-alpha*dt)+(forward[j+1]-forward[j])+vol*vol*(1-exp(-2*alpha*dt))/(2*alpha)*sqrt(dt)*randomwalk[i,j]
+    }
+  }
+  return(interest_path)
+}
+alpha=0.1
+sigma=0.015
+num_grid=4
+path_num=10000
+Vasicek_interest_rate<-Vasicek_interest(num_grid,path_num,spot[1],forward_rate,alpha,sigma)
+cat('Implied forward rate oberserved today:\n')
+for(i in 1:4){
+  cat('time',i,'~time',i+1,' : ',forward_rate[i],'\n')
+}
+cat('Expeacted Value of  1 year rate at year 1:',mean(Vasicek_interest_rate[,2]),'\n')
+cat('Expeacted Value of  2 year rate at year 1:',mean(Vasicek_interest_rate[,3]),'\n')
+cat('Expeacted Value of  3 year rate at year 1:',mean(Vasicek_interest_rate[,4]),'\n')
+cat('Expeacted Value of  4 year rate at year 1:',mean(Vasicek_interest_rate[,5]),'\n')
+
+hist(Vasicek_interest_rate[,2],main='Distribution of 1 year rate at year 1')
+hist(Vasicek_interest_rate[,3],main='Distribution of 2 year rate at year 1')
+hist(Vasicek_interest_rate[,4],main='Distribution of 3 year rate at year 1')
+hist(Vasicek_interest_rate[,5],main='Distribution of 4 year rate at year 1')
+###
+```
+## Step2: Estimated bond price of today
+```{r }
+K=100 #strike price
+bond_price<-rep(0,path_num)
+call_option_value<-rep(0,path_num)
+for(i in 1:path_num){
+  for(j in 2:num_grid)
+    bond_price[i]= bond_price[i]+C*exp(-Vasicek_interest_rate[i,j])
+    if(j==num_grid){
+      bond_price[i]=bond_price[i]+FV*exp(-Vasicek_interest_rate[i,j])
+    }
+  call_option_value[i]<-max(bond_price[i]-K,0)
+}
+Call_price<-mean(call_option_value)
+cat("Call option price for bond is:",Call_price)
+```

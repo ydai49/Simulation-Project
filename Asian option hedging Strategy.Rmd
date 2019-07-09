@@ -1,0 +1,394 @@
+---
+title: "Simulation HW#4 Q1"
+author: "Yu DAI"
+date: "2019/5/6"
+output: html_document
+---
+
+```{r}
+rand2<-function(numran,idum=-1){  
+  IM1=2147483563
+  IM2=2147483399
+  IMM1=IM1-1
+  IA1=40014
+  IA2=40692
+  IQ1=53668
+  IQ2=52774
+  IR1=12211
+  IR2=3791
+  NTAB=32
+  NDIV=1+IMM1/NTAB
+  #make sure that you initializa the generator with a non-positive idum. 
+  if(idum>0){idum=-idum}
+  
+  idum2=123456789
+  iv=rep(0,NTAB)
+  iy=0
+  #real number
+  AM=1./IM1
+  EPS=1.2e-7
+  RNMX=1.-EPS#number very close to 1
+  random<-rep(0,numran)
+  icount=1
+  for(icount in 1:numran){
+    if(idum<=0){
+      idum<-max(-idum,1)
+      idum2=idum
+      j=NTAB+8
+      while(j>0){
+        k<-as.integer(idum/IQ1)
+        idum<-IA1*(idum-k*IQ1)-k*IR1
+        if(idum<0){
+          idum<-idum+IM1
+        }
+        if(j<33){iv[j]<-idum}
+        j<-j-1
+      }
+      iy<-iv[1]
+    }
+    k<-as.integer(idum/IQ1)
+    idum<-IA1*(idum-k*IQ1)-k*IR1
+    if(idum<0){idum<-idum+IM1}
+    k<-as.integer(idum2/IQ2)
+    idum2=IA2*(idum2-k*IQ2)-k*IR2
+    if(idum2<0){idum2<-idum2+IM2}
+    j<-1+as.integer(iy/NDIV)
+    iy<-iv[j]-idum2
+    iv[j]<-idum
+    if(iy<1){iy<-iy+IMM1}
+    ran2<-min(AM*iy,RNMX)
+    random[icount]<-ran2
+  }
+  return(random)
+}
+
+gassMap<-function(idum){
+  #input: idum between 0 and 1
+  #output: x,approximation to inverse normal cdf
+  a0=2.50662823884
+  a1=-18.61500062529
+  a2=41.39119773534
+  a3=-25.44106049637
+  b0=-8.47351093090
+  b1=23.08336743743
+  b2=-21.06224101826
+  b3=3.13082909833
+  C<-c(0.3374754822726147,0.9761690190917186,0.1607979714918209
+       ,0.0276438810333863,0.0038405729373609,0.0003951896511919
+       ,0.0000321767881768,0.0000002888167364,0.0000003960315187)
+  
+  y<-idum-0.5
+  if(abs(y)<0.42){
+    r<-y*y
+    x<-y*(((a3*r+a2)*r+a1)*r+a0)/((((b3*r+b2)*r+b1)*r+b0)*r+1)
+  }
+  else{
+    r<-idum
+    if(y>0){r<-1-idum}
+    r<-log(-log(r))
+    x<-C[1]+r*(C[2]+r*(C[3]+r*(C[4]+r*(C[5]+r*(C[6]+r*(C[7]+r*(C[8]+r*C[9])))))))
+    if(y<0){x<-(-x)}
+  }
+  return(x)
+}
+#this is a function that generate normal distributed random number 
+gassrand<-function(numran,idum=-1){
+  if(idum>0){idum=-idum}
+  randnum=rand2(numran,idum)
+  gassRand=rep(0,length(randnum))
+  for(i in 1:length(randnum)){
+    gassRand[i]<-gassMap(randnum[i])
+  }
+  return(gassRand)
+}
+```
+Function that will simulate stock price given S0,drift,vol,r
+```{r}
+MY_Stock_Simu<-function(num_grid,path_num,dt,drift,vol,S0){
+  randomwalk<-gassrand(num_grid*path_num,0)
+  randomwalk<-t(matrix(data=randomwalk,nrow = num_grid, ncol = path_num,byrow = FALSE,dimnames = NULL))
+  price_path<-matrix(data = 0, nrow = path_num, ncol = num_grid+1, byrow = FALSE,dimnames = NULL)
+  price_path[,1]<-rep(S0,path_num)
+  #simulate stock path
+  for(i in 1:path_num){
+    for(j in 1:num_grid){
+      price_path[i,j+1]=price_path[i,j]*exp((drift*dt+vol*sqrt(dt)*randomwalk[i,j])) 
+    }
+  }
+  return(price_path)
+}
+```
+# Hedging Asian Options
+# option value: 10,000*Max{2*(Avg_S&P - Avg_S&P_0)/Avg_S&P_0,0}
+Step 1: Simulate stock path
+```{r}
+#stock info 
+S0<-2750
+dt<-1/12
+rf<-0.03
+q<-0.02 #divedent yield
+vol<-0.15
+
+drift<-0.08
+rf.drift<-rf-q-0.5*vol*vol
+
+
+m<-60 #num of grid on each path
+n<-1000 #num of path
+
+Simu_stock<-MY_Stock_Simu(m,n,dt,drift,vol,S0)
+Simu_stock_rf<-MY_Stock_Simu(m,n,dt,rf.drift,vol,S0)
+```
+First Simulation:
+Calculating the option price and option delta under riks_neutral GBM
+Function that will calculate Asian option price given n,m,stock_path
+```{r}
+Asian_option<-function(n,m,stock_path){
+  ave_price=rep(0,n)
+  option_value=rep(0,n)
+  delta<-rep(0,n)
+  num<-length(stock_path[1,])
+  grid<-num-1
+  for(i in 1:n){
+    ave_price[i]=mean(stock_path[i,])
+    #calculating option value
+    option_value[i]=max(20000*(ave_price[i]-stock_path[i,1])/stock_path[i,1],0)*exp(-rf*dt*grid)
+    if(ave_price[i]-stock_path[i,1]>0){
+      delta[i]<-(exp(-rf*dt*grid)*ave_price[i]/stock_path[i,1])
+    }
+    else{delta[i]<-0}
+  }
+  option_price<-mean(option_value)
+  option_delta<-mean(delta)
+  return(c(option_price,option_delta))
+}
+
+#Calculating the option price and option delta under riks_neutral GBM
+result<-Asian_option(n,m,Simu_stock_rf)
+option.price<-result[1]
+option.delta<-result[2]
+cat('Under risk neutral measure\n')
+cat('delta of option price is: ',option.price,'\n')
+cat('option price is: ',option.delta,'\n')
+```
+# Second simulation:capture the evolution of the S&P 500 over the 5-year Horizon of SIIA.
+```{r}
+OV<-rep(0,m)#option value
+OD<-rep(0,m)#option delta
+for(j in m:1){
+  result_temp<-Asian_option(n,m,Simu_stock[,(m-j+1):(m+1)])
+  OV[m+1-j]<-result_temp[1]
+  OD[m+1-j]<-result_temp[2]
+}
+OV
+OD
+length(OD)
+length(OV)
+```
+#delta hedging 
+# at each month, hedging ratio is OD, and corresponding option value is OV
+# look at each path
+```{r}
+Hedging_cost<-OV[1]*OD[1]
+for(i in 1:(m-1)){
+  if(OD[i]<=OD[i+1]){#buy more option
+    Hedging_cost<-Hedging_cost+OV[(i+1)]*(OD[(i+1)]-OD[i])
+  }
+  else{
+    Hedging_cost<-Hedging_cost+OV[(i+1)]*(OD[(i+1)]-OD[i])
+  }
+}
+cat('Hedaging cost: ',Hedging_cost,'\n')
+Portflio_Value<-rep(0,n)
+for(i in 1:n){
+  Portflio_Value[i]<-10000+20000/Simu_stock[i,1]*max(mean(Simu_stock[i,2:(m+1)])-Simu_stock[i,1],0)
+}
+mean_value<-mean(Portflio_Value)-Hedging_cost
+mean(Portflio_Value)
+cat('Mean value of the strategy is:',mean_value,'\n')
+cat('Mean return of the strategy is:',(mean_value-10000)/10000,'\n')
+cat('Without hedging,the Mean return of the portfolio is: ',(mean(Portflio_Value)-10000)/10000,'\n')
+
+```
+## Question 2
+
+Thus by hedging with the option, bank can reduce its risk.
+```{r}
+dt=2/52 #bi_weely grid
+K=100
+t=0.5
+S0=100
+vol=0.25
+r=0.03
+m<-13
+n<-10000
+drift<-r-0.5*vol*vol
+Simu_stock<-MY_Stock_Simu(m,n,dt,drift,vol,S0)
+```
+(2) Evaluation for early exercise is every two weeks, I define a function to calculated American option price based on barrier that user gives
+```{r }
+Us_option<-function(n,m,barrier,stocke_price,K){
+  option_value<-rep(0,n)
+  dt<-2/52
+  t_t_T<-m*dt
+  r<-0.03
+  t_n<-m #value every 2 weekd
+  for(i in 1:n){
+    for(j in 2:t_n){
+     if(Simu_stock[i,j]<=barrier){
+        #early exercise
+        option_value[i]=(K-stocke_price[i,j])*exp(-(j)*dt*r)
+        break;
+      }
+      option_value[i]=max((K-stocke_price[i,j]),0)*exp(-t_t_T*r)
+      
+    }
+  }
+  return( mean(option_value))
+}
+
+```
+(3) Determine the level of the barrier that maximized the value of the put option
+To make my code more effient:
+First,I use a series a grid of 1 from K/50 to K and calculated the option price for each barrier
+Second, I find the grid that has the maxinum price,best_grid1
+Third, I set a a series a grid of 0.1 from (best_grid1-1) to (best_grid1+1)
+Then, I find the grid that has the maxinum price,best_grid2
+Then, I set a a series a grid of 0.01 from (best_grid1-1) to (best_grid1+1)
+#By doing this,I can find the target grid doing the calculation for 80*n*m of precision of 0.001,  vs doing 50000*n*m  times
+```{r }
+barrier<-seq(50, 100, 1 )
+l<-length(barrier)
+option_price<-rep(0,l)
+for(i in 1:l){
+  option_price[i]<-Us_option(n,m,barrier[i],Simu_stock,K)
+}
+
+for(i in 1:3){
+I1=which.max(option_price)
+low=I1-1
+up=I1+1
+barrier<-seq(barrier[low], barrier[up], 1/10**i )
+l<-length(barrier)
+option_price<-rep(0,l)
+for(j in 1:l){
+  option_price[j]<-Us_option(n,m,barrier[j],Simu_stock,K)
+}
+}
+I1=which.max(option_price)
+optimized_barrier<-barrier[I1]
+optimized_option_price<-option_price[I1]
+
+cat('optimized barrier is: ',optimized_barrier)
+cat('\noptimized American option price is',optimized_option_price)
+cat('\nEuropean option price is: ',Us_option(n,m,0,Simu_stock,K))#given a barrier that stock price cannot reach==>Np early exercise==>european option price
+```
+
+As we can see that our American option price > European option price for the same parameters,which is consistent with the reality that American option is expensive than European option.
+
+## Check the value of the American put against the value determined by a Binomial Model
+```{r }
+# Binomial Model
+numsteps<-13
+DelT <- 2/52 
+uptick<-exp(+vol*sqrt(DelT))
+dntick<-exp(-vol*sqrt(DelT))
+FVFactor<-exp(r*DelT)
+probup<-(FVFactor-dntick)/(uptick-dntick)
+probdn<-1-probup
+SMat<-matrix(rep(0),nrow=numsteps,ncol=numsteps)
+EMat<-matrix(rep(0),nrow=numsteps,ncol=numsteps)
+AMat<-matrix(rep(0),nrow=numsteps,ncol=numsteps)
+for (i in 1:numsteps) {
+  for (j in 1:i) {
+    SMat[j,i]<-S0*uptick^(i-j)*dntick^(j-1) 
+}}
+
+i<-numsteps
+for (j in 1:i) {
+  EMat[j,numsteps]<-max(K-SMat[j,numsteps],0)
+  AMat[j,numsteps]<-max(K-SMat[j,numsteps],0)
+}
+i<-i-1
+while (i > 0) {
+  for (j in 1:i) {
+    EMat[j,i] <- (1/FVFactor)*(probup*EMat[j,i+1] + probdn*EMat[j+1,i+1])
+    AMat[j,i] <- (1/FVFactor)*(probup*AMat[j,i+1] + probdn*AMat[j+1,i+1])
+    AMat[j,i] <- max(AMat[j,i],K-SMat[j,i])
+    }
+    i<-i-1
+}
+
+cat('European option price is: ',EMat[1,1],'\n')
+cat('American option price is: ',AMat[1,1],'\n')
+```
+
+## Question 3
+```{r}
+numreg <-100
+var5 <-rep(0,numreg)
+var25 <- rep(0,numreg)
+vavg <- rep(0,numreg)
+cavg <- rep(0,numreg)
+lcount <-1
+
+numran<-1000000
+rand_norm_c <- gassrand(numran)
+
+
+  
+  Dnum <-100
+  rand_uniform_c <-rand2(Dnum)
+  
+  portfolio<-rep(0,Dnum)
+  portfolio2<-rep(0,Dnum)
+  ran100 <-as.integer(rand_uniform_c*100)+1
+  for(icount in 1:Dnum){
+    portfolio[icount]<-ran100[icount]*10000
+  }
+
+  AMatrix <-matrix(rnorm(Dnum^2),Dnum, Dnum)
+  CovarM  <- (crossprod(AMatrix))/100
+  AMatrix <-chol(CovarM)
+  AMatrixt <- t(AMatrix)
+  DeltaT <-1/254
+  Volatility<-diag(CovarM)
+  randZ <- rep(0,Dnum)
+  numruns <-100
+  P0 <-sum(portfolio)
+  rets<-rep(0,numruns)
+  TotalLoss <- rep(0,numruns)
+  PercentLoss<-rep(0,numruns)
+  dollar_rets<-rep(0,numruns)
+  for(icount in 1:Dnum){
+    default<-rep(0,Dnum)
+    loss<-rep(0,Dnum)
+    for(jcount in 1:Dnum){
+      randZ[jcount]<-rand_norm_c[lcount]
+      lcount<-lcount+1
+    }
+    ZVals<-AMatrixt%*%randZ
+    for(jcount in 1:Dnum){
+      if(-Volatility[jcount]>ZVals[jcount]){
+        #Volatility[jcount]
+        
+        default[jcount]<-1
+        loss[jcount]<-portfolio[jcount]*0.2
+      }
+      portfolio2[jcount]<-portfolio[jcount]*exp(((-0.5*Volatility[jcount]^2)*DeltaT)-sqrt(DeltaT)*ZVals[jcount])
+    }
+    P1<-sum(portfolio2)
+    TotalLoss[icount]<-sum(loss)
+    PercentLoss[icount]<-TotalLoss[icount]/P0
+    rets[icount]<-log(P1/P0)
+    dollar_rets[icount]<-P1-P0
+  }
+
+```
+
+```{r}
+cat('the level of loss of the portfolio',TotalLoss,'\n')
+a=sort(PercentLoss)
+n=as.integer(length(a)*0.05)
+cat('percentage loss of losses at the 5% probability level is ',a[n])
+```

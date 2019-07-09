@@ -1,0 +1,434 @@
+---
+title: "Simulation HW2"
+author: "Yu DAI"
+date: "2019/4/6"
+output: html_document
+---
+
+```{r, echo=FALSE}
+rand2<-function(numran,idum=-1){  
+  IM1=2147483563
+  IM2=2147483399
+  IMM1=IM1-1
+  IA1=40014
+  IA2=40692
+  IQ1=53668
+  IQ2=52774
+  IR1=12211
+  IR2=3791
+  NTAB=32
+  NDIV=1+IMM1/NTAB
+  #make sure that you initializa the generator with a non-positive idum. 
+  if(idum>0){idum=-idum}
+  
+  idum2=123456789
+  iv=rep(0,NTAB)
+  iy=0
+  #real number
+  AM=1./IM1
+  EPS=1.2e-7
+  RNMX=1.-EPS#number very close to 1
+  random<-rep(0,numran)
+  icount=1
+  for(icount in 1:numran){
+    if(idum<=0){
+    idum<-max(-idum,1)
+    idum2=idum
+    j=NTAB+8
+   while(j>0){
+        k<-as.integer(idum/IQ1)
+        idum<-IA1*(idum-k*IQ1)-k*IR1
+        if(idum<0){
+          idum<-idum+IM1
+        }
+        if(j<33){iv[j]<-idum}
+        j<-j-1
+    }
+    iy<-iv[1]
+    }
+    k<-as.integer(idum/IQ1)
+    idum<-IA1*(idum-k*IQ1)-k*IR1
+    if(idum<0){idum<-idum+IM1}
+    k<-as.integer(idum2/IQ2)
+    idum2=IA2*(idum2-k*IQ2)-k*IR2
+    if(idum2<0){idum2<-idum2+IM2}
+    j<-1+as.integer(iy/NDIV)
+    iy<-iv[j]-idum2
+    iv[j]<-idum
+    if(iy<1){iy<-iy+IMM1}
+    ran2<-min(AM*iy,RNMX)
+    random[icount]<-ran2
+  }
+  return(random)
+}
+hist(rand2(1000*12,0))
+hist(rand2(10000*12,0))
+```
+
+```{r }
+##this is a function that mapping uniform random number into normal distribution random number
+gassMap<-function(idum){
+  #input: idum between 0 and 1
+  #output: x,approximation to inverse normal cdf
+  a0=2.50662823884
+  a1=-18.61500062529
+  a2=41.39119773534
+  a3=-25.44106049637
+  b0=-8.47351093090
+  b1=23.08336743743
+  b2=-21.06224101826
+  b3=3.13082909833
+  C<-c(0.3374754822726147,0.9761690190917186,0.1607979714918209
+       ,0.0276438810333863,0.0038405729373609,0.0003951896511919
+       ,0.0000321767881768,0.0000002888167364,0.0000003960315187)
+  
+  y<-idum-0.5
+  if(abs(y)<0.42){
+    r<-y*y
+    x<-y*(((a3*r+a2)*r+a1)*r+a0)/((((b3*r+b2)*r+b1)*r+b0)*r+1)
+  }
+  else{
+    r<-idum
+    if(y>0){r<-1-idum}
+    r<-log(-log(r))
+    x<-C[1]+r*(C[2]+r*(C[3]+r*(C[4]+r*(C[5]+r*(C[6]+r*(C[7]+r*(C[8]+r*C[9])))))))
+    if(y<0){x<-(-x)}
+  }
+  return(x)
+}
+#this is a function that generate normal distributed random number 
+gassrand<-function(numran,idum=-1){
+  if(idum>0){idum=-idum}
+  randnum=rand2(numran,idum)
+  gassRand=rep(0,length(randnum))
+  for(i in 1:length(randnum)){
+    gassRand[i]<-gassMap(randnum[i])
+  }
+  return(gassRand)
+}
+
+hist(gassrand(1000*12,0))
+hist(gassrand(10000*12,0))
+```
+
+```{r , echo=FALSE}
+#Geometric Brownian motion:
+#St+1/St=exp((r- 0.5*sigma*sigma)*dt+sigma*sqrt(dt)*error)
+#This is a function that calculate price simulation result 
+option_price1<-function(T=1,num_grid=12,r=0,sigma=0,path_num=1,S0=100,
+                        K=100,CallorPut='C'){
+  #time grid
+  dt<-T/num_grid
+  randomwalk<-gassrand(num_grid*path_num,0)
+  randomwalk<-t(matrix(data=randomwalk,nrow = num_grid,
+                       ncol = path_num,byrow = FALSE,dimnames = NULL))
+  price_path<-matrix(data = 0, nrow = path_num, 
+                     ncol = num_grid+1, byrow = FALSE,dimnames = NULL)
+  price_path[,1]<-rep(S0,path_num)#give initial value to each path
+  #simulate stock path
+  for(i in 1:path_num){
+    for(j in 1:num_grid){
+      price_path[i,j+1]=price_path[i,j]*exp((r-0.5*sigma**2)*dt +sigma*sqrt(dt)*randomwalk[i,j])
+    }
+  }
+  #calulating 95% confidence interval for stock at each grid:
+  lw<-exp(log(S0)+(r-0.5*sigma**2)*T-1.96*sigma*sqrt(T))#lower bound
+  up<-exp(log(S0)+(r-0.5*sigma**2)*T+1.96*sigma*sqrt(T))#higher bound
+
+  #option pricing 
+  path_price<-rep(0,path_num)
+  if(CallorPut=='C'){
+    for(i in 1:path_num){
+      path_price[i]=max(max(price_path[i,2:(num_grid+1)])-K,0)
+    }
+    hist(path_price,main = paste("Histogram of" , 'Call Option value'))
+  }
+  else{
+    for(i in 1:path_num){
+      path_price[i]=max(price_path[i,(num_grid+1)]-min(price_path[i,2:(num_grid+1)]),0)
+    }
+    hist(path_price,main = paste("Histogram of" , 'Put Option value'))
+  }
+  option_lw<-(mean(path_price)-1.96*sd(path_price)/sqrt(length(path_price)))*exp(-r*T)
+  option_up<-mean(path_price)+1.96*sd(path_price)/sqrt(length(path_price))*exp(-r*T)
+  cat("95% Confidence interval is:" ,"[",option_lw,",",option_up,']','\n')
+  return(path_price)
+}
+```
+##Stock information as follows:
+```{r ,echo=FALSE}
+T<-1#Time to maturity
+num_grid<-12
+r<-0.03#interest rate
+sigma<-0.25#volatility of stock price
+path_num1=1000#simulation path
+path_num2=10000#simualtion path
+S0<-100
+K<-100
+
+#call option:1000 path
+call_price1<-option_price1(T,num_grid,r,sigma,path_num1,S0,K,'C')
+Call_price1<-mean(call_price1)*exp(-r*T)
+Call_price1
+```
+
+```{r,echo=FALSE}
+#call option:10000 path
+call_price2<-option_price1(T,num_grid,r,sigma,path_num2,S0,K,'C')
+Call_price2<-mean(call_price2)*exp(-r*T)
+Call_price2
+```
+```{r,echo=FALSE}
+#floating option:1000 path
+put_price1<-option_price1(T,num_grid,r,sigma,path_num1,S0,K,'P')
+Put_price1<-mean(put_price1)*exp(-r*T)
+Put_price1
+```
+```{r,echo=FALSE}
+#floating option:10000 path
+put_price2<-option_price1(T,num_grid,r,sigma,path_num2,S0,K,'P')
+Put_price2<-mean(put_price2)*exp(-r*T)
+Put_price2
+```
+## Given a positive definite symmetrix matrix a[n,n],with physical dimension np, this routine construct its Cholesky decomposition, A=L*L^T. The function return the diagonal elements of Cholesky factor L 
+```{r,echo=FALSE}
+choldc<-function(a,n){
+  #a: n by n positive-definite symmetric matrix
+  #p: vector
+  sum<-0
+  p<-rep(0,n)
+  for(i in 1:n){
+    for(j in i:n){
+      sum<-a[i,j]
+      k=i-1
+      while(k>=1){
+        sum=sum-a[i,k]*a[j,k]
+        k=k-1
+      }
+      if(i==j){
+        if(sum<=0){
+          cat("choldc failed")
+          
+        }
+        p[i]=sqrt(sum)
+        }
+      else{
+        a[j,i]=sum/p[i]
+      }
+    }
+  }
+  a
+  return(p)
+}
+
+#alternative method
+#a.chol<-chol(test)
+#a.chol
+``` 
+---
+This is a part that will implement Quantos
+Data Source:
+(1) Stock infomation(AAPL) on 2019/04/04
+S1(0)=194.961805(dividend adjusted spot price)
+sigma0=0.054883 (annulized volatility)
+USD.r=0.0244 (interest rate: using three month treasury rate)
+EUROS.r=-0.0035886
+
+(2) Euros/USD exchange rate
+S2(0)=0.891200
+sigma1=0.054184(annulized volatility)
+mean=0.000298 
+
+(3) At the money option:
+AAPL Jul 2019 195 call
+Maturity=07/19/2019
+option price=10.9
+
+(3) At the money option:
+t=0.25 time to maturity (3 month)
+K=S1(0)*S2(0)=173.75
+dt=t/63(Because there are 63 trade days in 3 month)
+---
+##Simulation process
+```{r,echo=FALSE}
+#stock info 
+stock.S0=194.961805#adjusted future dividend
+# Euros/USD exchange rate
+exchange.S0=0.8912
+exchange.mean=0.00036832
+#interest rate and time to maturity
+K=stock.S0*exchange.S0
+USD.r=0.0244 
+EUROS.r=-0.0035886  
+
+
+```
+```{r,echo=FALSE}
+library(readxl)
+data <- read_excel("/Users/daiyu/Desktop/AAPL&exchange 2.xlsx",col_names = FALSE, col_types = c("text", "numeric", "numeric", "numeric", "numeric","text","text"))
+stock.dailyret<-(data$..3[1:61])
+stock.dailyret
+exchange.dailyret<-(data$..5[1:61])
+exchange.dailyret
+stock.ret0<-stock.dailyret[1]
+exchange.ret0<-exchange.dailyret[1]
+```
+## Calculate variance matrix between daily changes in stock return and exchange rate changes
+```{r,echo=FALSE}
+stock_exchange<-cbind(stock.dailyret,exchange.dailyret)
+stock_exchange.var<-var(stock_exchange)
+stock_exchange.var
+stock_exchange.cor<-cor(stock_exchange)
+stock_exchange.cor
+
+```
+## cholesky decomposing of variance matrix of stock and exchange rate
+```{r,echo=FALSE}
+vector.A<-choldc(stock_exchange.var,2)
+chol(stock_exchange.var)
+vector.A
+stock.sigma<-vector.A[1]*sqrt(251)#stock has 252 trade days,so 251 data return each year 
+stock.sigma
+exchange.sigma<-vector.A[2]*sqrt(336)#echange rate has 337 trade days,so 336 data return each year 
+exchange.sigma
+```
+## Simulating Process
+
+```{r,echo=FALSE}
+#step 1: generate 2 random variable X1,X2
+path1<-1000
+grid<-63
+t<-0.25
+dt<-t/grid
+X1<-gassrand(1000*63,0)#seed:0
+X2<-gassrand(1000*63,-1)#seed:-1
+
+randomwalk1.error1<-X1
+randomwalk1.error2<-stock_exchange.cor[1,2]*X1+sqrt(1-stock_exchange.cor[1,2]**2)*X2
+randomwalk1.error1<-t(matrix(data=randomwalk1.error1,nrow = grid, ncol = path1,byrow = FALSE,dimnames = NULL))
+randomwalk1.error2<-t(matrix(data=randomwalk1.error2,nrow = grid, ncol = path1,byrow = FALSE,dimnames = NULL))
+#step 2: Simulate 3-month returns for the Stock and Euro/USD exchange rate 
+#path=1000
+Simu.stockret<-matrix(data=NA,nrow =path1,ncol = grid+1 )
+Simu.stockprice<-matrix(data=NA,nrow =path1,ncol = grid+1 )
+Simu.exchangeret<-matrix(data=NA,nrow =path1,ncol = grid+1 )
+Simu.exchangeprice<-matrix(data=NA,nrow =path1,ncol = grid+1 )
+for(i in 1:path1){
+  Simu.stockprice[i,1]<-stock.S0
+  Simu.stockret[i,1]<-stock.ret0
+  Simu.exchangeret[i,1]<-exchange.ret0
+  Simu.exchangeprice[i,1]<-exchange.S0
+  
+  for(j in 2:(grid+1)){
+    Simu.stockret[i,j]<-Simu.stockret[i,j-1]+(USD.r-0.5*stock.sigma**2)*dt+stock.sigma*sqrt(dt)*randomwalk1.error1[i,j-1]
+    Simu.exchangeret[i,j]<-Simu.exchangeret[i,j-1]+(EUROS.r-USD.r-0.5*exchange.sigma**2)*dt+exchange.sigma*sqrt(dt)*randomwalk1.error2[i,j-1]
+    Simu.stockprice[i,j]<-Simu.stockprice[i,j-1]*exp((USD.r-0.5*stock.sigma**2)*dt+stock.sigma*sqrt(dt)*randomwalk1.error1[i,j-1])
+    Simu.exchangeprice[i,j]<-Simu.exchangeprice[i,j-1]*exp((EUROS.r-USD.r-0.5*exchange.sigma**2)*dt+exchange.sigma*sqrt(dt)*randomwalk1.error2[i,j-1])
+  }
+}
+## Option Pricing 
+
+M_price<- Simu.stockprice[,grid+1]*Simu.exchangeprice[,grid+1]
+hist(M_price,main = "Stock Price at maturity in Euros")
+compare<-function(a){
+  if(a>0){return(a)}
+  else{return(0)}
+}
+
+option_value<-as.matrix(M_price-K)
+option_value<-apply(option_value,1,compare)
+hist(option_value,main="Option values at maturity in Euros")
+Call_option_price<-mean(option_value)*exp(-EUROS.r*t)
+Call_option_price
+option_lw<-(mean(option_value)-1.96*stdev(option_value)/sqrt(length(option_value)))*exp(-EUROS.r*t)
+option_up<-mean(option_value)+1.96*stdev(option_value)/sqrt(length(option_value))*exp(-EUROS.r*t)
+cat("95% Confidence interval is:" ,"[",option_lw,",",option_up,']','\n')
+### problen with confidence interval calculation 
+```
+# 95% confidence bounds for simulations with 1,000  estimates.
+```{r,echo=FALSE}
+#95% confidence bounds for simulations with 1,000  estimates.
+#lower bound
+stock.lw<-exp(log(stock.S0)+(USD.r-0.5*stock.sigma**2)*t-1.96*stock.sigma*sqrt(t))
+exchange.lw<-exp(log(exchange.S0)+(exchange.mean-0.5*exchange.sigma**2)*t-1.96*exchange.sigma*sqrt(t))
+option.lw<-stock.lw*exchange.lw-K
+#higher bound
+stock.up<-exp(log(stock.S0)+(USD.r-0.5*stock.sigma**2)*t+1.96*stock.sigma*sqrt(t))
+exchange.up<-exp(log(exchange.S0)+(exchange.mean-0.5*exchange.sigma**2)*t+1.96*exchange.sigma*sqrt(t))
+option.up<-stock.up*exchange.up-K
+
+option_value_df<-data.frame(option_value)
+option_value_ci<-subset(option_value_df,option_value>=option.lw & option_value<=option.up)
+hist(option_value_ci$option_value,main="Option Value with 95% Confidence")
+option_lw<-(mean(option_value)-1.96*stdev(option_value)/sqrt(length(option_value)))*exp(-r*T)
+option_up<-mean(option_value)+1.96*stdev(option_value)/sqrt(length(option_value))*exp(-r*T)
+cat("confidence inter is: [",max(option.lw,0),',',option.up,']')
+
+```
+## Path=10000
+```{r,echo=FALSE}
+path1<-10000
+grid<-63
+t<-0.25
+dt<-t/grid
+X1<-gassrand(10000*63,0)#seed:0
+X2<-gassrand(10000*63,-1)#seed:-1
+
+randomwalk1.error1<-X1
+randomwalk1.error2<-stock_exchange.cor[1,2]*X1+sqrt(1-stock_exchange.cor[1,2]**2)*X2
+randomwalk1.error1<-t(matrix(data=randomwalk1.error1,nrow = grid, ncol = path1,byrow = FALSE,dimnames = NULL))
+randomwalk1.error2<-t(matrix(data=randomwalk1.error2,nrow = grid, ncol = path1,byrow = FALSE,dimnames = NULL))
+
+#step 2: Simulate 3-month returns for the Stock and Euro/USD exchange rate 
+#path=10000
+
+Simu.stockret<-matrix(data=NA,nrow =path1,ncol = grid+1 )
+Simu.stockprice<-matrix(data=NA,nrow =path1,ncol = grid+1 )
+Simu.exchangeret<-matrix(data=NA,nrow =path1,ncol = grid+1 )
+Simu.exchangeprice<-matrix(data=NA,nrow =path1,ncol = grid+1 )
+for(i in 1:path1){
+  Simu.stockprice[i,1]<-stock.S0
+  Simu.stockret[i,1]<-stock.ret0
+  Simu.exchangeret[i,1]<-exchange.ret0
+  Simu.exchangeprice[i,1]<-exchange.S0
+  
+  for(j in 2:(grid+1)){
+    Simu.stockret[i,j]<-Simu.stockret[i,j-1]+(USD.r-0.5*stock.sigma**2)*dt+stock.sigma*sqrt(dt)*randomwalk1.error1[i,j-1]
+    Simu.exchangeret[i,j]<-Simu.exchangeret[i,j-1]+(exchange.mean-0.5*exchange.sigma**2)*dt+exchange.sigma*sqrt(dt)*randomwalk1.error2[i,j-1]
+    Simu.stockprice[i,j]<-Simu.stockprice[i,j-1]*exp((USD.r-0.5*stock.sigma**2)*dt+stock.sigma*sqrt(dt)*randomwalk1.error1[i,j-1])
+    Simu.exchangeprice[i,j]<-Simu.exchangeprice[i,j-1]*exp((exchange.mean-0.5*exchange.sigma**2)*dt+exchange.sigma*sqrt(dt)*randomwalk1.error2[i,j-1])
+  }
+}
+
+## Option Pricing 
+
+M_price<- Simu.stockprice[,grid+1]*Simu.exchangeprice[,grid+1]
+hist(M_price,main = "Stock Price at maturity in Euros")
+compare<-function(a){
+  if(a>0){return(a)}
+  else{return(0)}
+}
+option_value<-as.matrix(M_price-K)
+option_value<-apply(option_value,1,compare)
+hist(option_value,main="Option values at maturity in Euros,path=10,000")
+Call_option_price<-mean(option_value)*exp(-EUROS.r*t)
+Call_option_price
+option_lw<-(mean(option_value)-1.96*stdev(option_value)/sqrt(length(option_value)))*exp(-EUROS.r*t)
+option_up<-mean(option_value)+1.96*stdev(option_value)/sqrt(length(option_value))*exp(-EUROS.r*t)
+cat("95% Confidence interval is:" ,"[",option_lw,",",option_up,']','\n')
+```
+# 95% confidence bounds for simulations with 1,0000  estimates.
+```{r,echo=FALSE}
+#95% confidence bounds for simulations with 1,0000  estimates.
+#lower bound
+stock.lw<-exp(log(stock.S0)+(USD.r-0.5*stock.sigma**2)*t-1.96*stock.sigma*sqrt(t))
+exchange.lw<-exp(log(exchange.S0)+(exchange.mean-0.5*exchange.sigma**2)*t-1.96*exchange.sigma*sqrt(t))
+option.lw<-stock.lw*exchange.lw-K
+#higher bound
+stock.up<-exp(log(stock.S0)+(USD.r-0.5*stock.sigma**2)*t+1.96*stock.sigma*sqrt(t))
+exchange.up<-exp(log(exchange.S0)+(exchange.mean-0.5*exchange.sigma**2)*t+1.96*exchange.sigma*sqrt(t))
+option.up<-stock.up*exchange.up-K
+hist(option_value_ci$option_value,main="Option Value with 95% Confidence")
+cat("confidence inter is: [",max(option.lw,0),',',option.up,']')
+
+```
